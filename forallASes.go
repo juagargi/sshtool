@@ -140,7 +140,9 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 	arguments = append(arguments, "-t", "-p", strconv.Itoa(int(machine.port)), "scion@"+machine.host, command)
 	cmd := exec.Command("ssh", arguments...)
 
-	cmd.Stdin = os.Stdin
+	// cmd.Stdin=os.Stdin would cause problems with the terminal running this application (2nd instance of ssh and beyond)
+	// so we use the default behavior which is to open os.Devnull
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
