@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -17,7 +18,7 @@ const targetsFilename = ".scionlabTargetMachines"
 
 type target struct {
 	host string
-	port int16
+	port uint16
 }
 
 func loadMachines() []target {
@@ -37,10 +38,27 @@ func loadMachines() []target {
 		fmt.Println("Error:", err)
 		os.Exit(1)
 	}
+
 	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		host := scanner.Text()
-		machines = append(machines, target{host: host})
+	port := uint16(22)
+	for lineNumber := 1; scanner.Scan(); lineNumber++ {
+		fields := strings.Fields(scanner.Text())
+		switch len(fields) {
+		case 0:
+			continue
+		case 2:
+			longPort, err := strconv.ParseUint(fields[1], 10, 16)
+			if err != nil {
+				fmt.Println("Error parsing the targets file at line", lineNumber, ", expecting host port:", err)
+			}
+			port = uint16(longPort)
+			fallthrough
+		case 1:
+			machines = append(machines, target{host: fields[0], port: port})
+		default:
+			fmt.Println("Error parsing the targets file at line", lineNumber, ", expected host port but encountered", len(fields), " fields instead:", scanner.Text())
+			os.Exit(1)
+		}
 	}
 	err = scanner.Err()
 	if err != nil {
@@ -119,7 +137,7 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 	for _, o := range sshOptions {
 		arguments = append(arguments, "-o", o)
 	}
-	arguments = append(arguments, "-t", "scion@"+machine.host, command)
+	arguments = append(arguments, "-t", "-p", strconv.Itoa(int(machine.port)), "scion@"+machine.host, command)
 	cmd := exec.Command("ssh", arguments...)
 
 	cmd.Stdin = os.Stdin
@@ -159,7 +177,7 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 
 func runScript(machine *target, sshOptions []string, script string, output chan<- string, errors chan<- error) error {
 	remoteScript := "__forAll_script.sh"
-	cmd := exec.Command("scp", script, "scion@"+machine.host+":/tmp/"+remoteScript)
+	cmd := exec.Command("scp", "-P", strconv.Itoa(int(machine.port)), script, "scion@"+machine.host+":/tmp/"+remoteScript)
 	err := cmd.Run()
 	if err != nil {
 		return err
@@ -184,7 +202,7 @@ func usage() {
 %s {'commands && to be executed' | -f script_file_here_to_run_there.sh} [-o ssh_options]
 
 The command will read the target machines from file located in ~/%s
-`, os.Args[0], os.Args[0], targetsFilename)
+`, os.Args[0], targetsFilename)
 }
 
 func main() {
