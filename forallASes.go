@@ -305,12 +305,30 @@ func main() {
 			sync <- i
 		}(i)
 	}
+	// execution has finished here for all targets
+	summarizedOutput := make(map[string][]int) // output to machine index
 	for i := 0; i < len(machines); i++ {
 		machineIdx := <-sync
-		fmt.Printf("-- Done %d / %d ---------- Machine %s ----------------------\n", i+1, len(machines), machines[machineIdx].host)
-		fmt.Printf(output[machineIdx])
-		fmt.Println("-------------------------------------------------------------------------")
+		out := output[machineIdx]
+		summarizedOutput[out] = append(summarizedOutput[out], machineIdx)
+		fmt.Printf("    Done %d / %d        Machine %s \n", i+1, len(machines), machines[machineIdx].host)
 	}
+	// hashed output:
+	outputIndex := 1
+	for k, v := range summarizedOutput {
+		fmt.Println("-----------------------------------------------")
+		fmt.Printf("-- Output %d / %d :\n", outputIndex, len(summarizedOutput))
+		fmt.Println("---- BEGIN -----------------------------------")
+		fmt.Print(k)
+		fmt.Println("---- END --------------------------------------")
+		fmt.Println("For targets:")
+		for i := range v {
+			fmt.Printf("%v ", machines[i].host)
+		}
+		fmt.Println()
+		outputIndex++
+	}
+	fmt.Println("-----------------------------------------------")
 
 	// errors:
 	donePrintErrorHeader := false
@@ -334,6 +352,7 @@ func main() {
 			fmt.Printf("%s\n\n", msgs)
 		}
 	}
+	fmt.Printf("----------------------------------------------------------------------------\n")
 
 	// only now delete the temporary directory
 	err = os.RemoveAll(tempDir)
