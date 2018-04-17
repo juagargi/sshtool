@@ -42,6 +42,9 @@ func loadMachines() []target {
 	scanner := bufio.NewScanner(file)
 	port := uint16(22)
 	for lineNumber := 1; scanner.Scan(); lineNumber++ {
+		if len(scanner.Text()) > 0 && scanner.Text()[0] == '#' {
+			continue
+		}
 		fields := strings.Fields(scanner.Text())
 		switch len(fields) {
 		case 0:
