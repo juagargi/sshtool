@@ -15,8 +15,13 @@ import (
 
 const targetsFilename = ".scionlabTargetMachines"
 
-func loadMachines() []string {
-	var machines []string
+type target struct {
+	host string
+	port int16
+}
+
+func loadMachines() []target {
+	var machines []target
 	usr, err := user.Current()
 	if err != nil {
 		fmt.Println("Error obtaining current user:", err)
@@ -34,7 +39,8 @@ func loadMachines() []string {
 	}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		machines = append(machines, scanner.Text())
+		host := scanner.Text()
+		machines = append(machines, target{host: host})
 	}
 	err = scanner.Err()
 	if err != nil {
@@ -107,8 +113,15 @@ func FileToChannel(file io.Reader) (chan string, chan error) {
 	return ch, errch
 }
 
-func ssh(machine string, command string, output chan<- string, errors chan<- error) error {
-	cmd := exec.Command("ssh", "-o", "LogLevel=QUIET", "-t", "scion@"+machine, command)
+func ssh(machine *target, sshOptions []string, command string, output chan<- string, errors chan<- error) error {
+	sshOptions = append(sshOptions, "LogLevel=QUIET")
+	arguments := []string{}
+	for _, o := range sshOptions {
+		arguments = append(arguments, "-o", o)
+	}
+	arguments = append(arguments, "-t", "scion@"+machine.host, command)
+	cmd := exec.Command("ssh", arguments...)
+
 	cmd.Stdin = os.Stdin
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -144,14 +157,14 @@ func ssh(machine string, command string, output chan<- string, errors chan<- err
 	return nil
 }
 
-func runScript(machine string, script string, output chan<- string, errors chan<- error) error {
+func runScript(machine *target, sshOptions []string, script string, output chan<- string, errors chan<- error) error {
 	remoteScript := "__forAll_script.sh"
-	cmd := exec.Command("scp", script, "scion@"+machine+":/tmp/"+remoteScript)
+	cmd := exec.Command("scp", script, "scion@"+machine.host+":/tmp/"+remoteScript)
 	err := cmd.Run()
 	if err != nil {
 		return err
 	}
-	return ssh(machine, "cd /tmp;chmod +x "+remoteScript+";. ~/.profile;./"+remoteScript+";EX=$?;rm "+remoteScript+";exit $EX", output, errors)
+	return ssh(machine, sshOptions, "cd /tmp;chmod +x "+remoteScript+";. ~/.profile;./"+remoteScript+";EX=$?;rm "+remoteScript+";exit $EX", output, errors)
 }
 
 func allOfChannelWithTempFile(ch <-chan string, f *os.File) string {
@@ -167,13 +180,13 @@ func allOfChannelWithTempFile(ch <-chan string, f *os.File) string {
 }
 
 func usage() {
-	fmt.Printf(`Usage (first or second option):
-%s 'commands ; to be | executed'
-%s -f script_file_here_to_run_there.sh
+	fmt.Printf(`Usage:
+%s {'commands && to be executed' | -f script_file_here_to_run_there.sh} [-o ssh_options]
 
 The command will read the target machines from file located in ~/%s
 `, os.Args[0], os.Args[0], targetsFilename)
 }
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -182,10 +195,18 @@ func main() {
 	var commands []string
 	script := ""
 	command := ""
+	sshOptions := []string{""}
 	for i := 1; i < len(os.Args); i++ {
 		if os.Args[i] == "--help" || os.Args[i] == "-h" {
 			usage()
 			return
+		} else if os.Args[i] == "-o" {
+			if len(os.Args) < i+2 {
+				usage()
+				return
+			}
+			sshOptions = append(sshOptions, os.Args[i+1])
+			i++
 		} else if os.Args[i] == "-f" {
 			if len(os.Args) < i+2 || len(commands) > 0 {
 				usage()
@@ -226,7 +247,7 @@ func main() {
 		outputs[i] = make(chan string)
 		errors[i] = make(chan error)
 
-		tempFile := fmt.Sprintf("channel_%s", machines[i])
+		tempFile := fmt.Sprintf("channel_%s", machines[i].host)
 		tempFile = filepath.Join(tempDir, tempFile)
 		f, err := os.Create(tempFile)
 		if err != nil {
@@ -239,9 +260,9 @@ func main() {
 	setter := func(i int) {
 		var err error
 		if script == "" {
-			err = ssh(machines[i], command, outputs[i], errors[i])
+			err = ssh(&machines[i], sshOptions, command, outputs[i], errors[i])
 		} else {
-			err = runScript(machines[i], script, outputs[i], errors[i])
+			err = runScript(&machines[i], sshOptions, script, outputs[i], errors[i])
 		}
 		if err != nil {
 			close(outputs[i])
@@ -263,7 +284,7 @@ func main() {
 	}
 	for i := 0; i < len(machines); i++ {
 		machineIdx := <-sync
-		fmt.Printf("-- Done %d / %d ---------- Machine %s ----------------------\n", i+1, len(machines), machines[machineIdx])
+		fmt.Printf("-- Done %d / %d ---------- Machine %s ----------------------\n", i+1, len(machines), machines[machineIdx].host)
 		fmt.Printf(output[machineIdx])
 		fmt.Println("-------------------------------------------------------------------------")
 	}
@@ -286,7 +307,7 @@ func main() {
 	for i, msgs := range output {
 		if msgs != "" {
 			printErrorHeader()
-			fmt.Printf("Errors from machine %v:\n", machines[i])
+			fmt.Printf("Errors from machine %v:\n", machines[i].host)
 			fmt.Printf("%s\n\n", msgs)
 		}
 	}
