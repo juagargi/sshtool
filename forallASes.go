@@ -14,26 +14,25 @@ import (
 	"sync"
 )
 
-const targetsFilename = ".scionlabTargetMachines"
+var (
+	defaultTargetsFilename = func() string {
+		usr, err := user.Current()
+		if err != nil {
+			fmt.Println("Error obtaining current user:", err)
+			os.Exit(1)
+		}
+		return filepath.Join(usr.HomeDir, ".scionlabTargetMachines")
+	}()
+)
 
 type target struct {
 	host string
 	port uint16
 }
 
-func loadMachines() []target {
+func loadMachines(targetsFile string) []target {
 	var machines []target
-	usr, err := user.Current()
-	if err != nil {
-		fmt.Println("Error obtaining current user:", err)
-		os.Exit(1)
-	}
-	fileName := filepath.Join(usr.HomeDir, targetsFilename)
-	if _, err := os.Stat(fileName); err != nil {
-		fmt.Println("Error:", err)
-		os.Exit(1)
-	}
-	file, err := os.Open(fileName)
+	file, err := os.Open(targetsFile)
 	if err != nil {
 		fmt.Println("Error:", err)
 		os.Exit(1)
@@ -204,25 +203,29 @@ func allOfChannelWithTempFile(ch <-chan string, f *os.File) string {
 
 func usage() {
 	fmt.Printf(`Usage:
-%s {'commands && to be executed' | -f script_file_here_to_run_there.sh} [-o ssh_options]
+%s {'commands && to be executed' | -f script_file_here_to_run_there.sh} [-o ssh_options] [-t targets_file]
 
-The command will read the target machines from file located in ~/%s
-`, os.Args[0], targetsFilename)
+If -t is not specified, the target machines file will be %s
+`, os.Args[0], defaultTargetsFilename)
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		usage()
-		return
-	}
 	var commands []string
 	script := ""
 	command := ""
 	sshOptions := []string{""}
+	targetsFile := defaultTargetsFilename
 	for i := 1; i < len(os.Args); i++ {
 		if os.Args[i] == "--help" || os.Args[i] == "-h" {
 			usage()
 			return
+		} else if os.Args[i] == "-t" {
+			if len(os.Args) < i+2 {
+				usage()
+				return
+			}
+			targetsFile = os.Args[i+1]
+			i++
 		} else if os.Args[i] == "-o" {
 			if len(os.Args) < i+2 {
 				usage()
@@ -246,6 +249,10 @@ func main() {
 		}
 	}
 	if script == "" {
+		if len(commands) == 0 {
+			usage()
+			return
+		}
 		command = strings.Join(commands, ";")
 		// amend command:
 		command = ". ~/.profile;" + command
@@ -254,7 +261,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	machines := loadMachines()
+	machines := loadMachines(targetsFile)
 
 	tempDir, err := ioutil.TempDir("", "__forallASes_temp_")
 	if err != nil {
