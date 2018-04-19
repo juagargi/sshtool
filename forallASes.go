@@ -39,8 +39,8 @@ func loadMachines(targetsFile string) []target {
 	}
 
 	scanner := bufio.NewScanner(file)
-	port := uint16(22)
 	for lineNumber := 1; scanner.Scan(); lineNumber++ {
+		port := uint16(22)
 		if len(scanner.Text()) > 0 && scanner.Text()[0] == '#' {
 			continue
 		}
@@ -216,7 +216,7 @@ func main() {
 	var commands []string
 	script := ""
 	command := ""
-	sshOptions := []string{""}
+	sshOptions := []string{}
 	targetsFile := defaultTargetsFilename
 	for i := 1; i < len(os.Args); i++ {
 		if os.Args[i] == "--help" || os.Args[i] == "-h" {
