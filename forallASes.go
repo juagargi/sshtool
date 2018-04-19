@@ -206,6 +206,9 @@ func usage() {
 %s {'commands && to be executed' | -f script_file_here_to_run_there.sh} [-o ssh_options] [-t targets_file]
 
 If -t is not specified, the target machines file will be %s
+Example of some of the ssh_options you can specify:
+-o ConnectTimeout=1 -o ConnectionAttempts=1
+etc.
 `, os.Args[0], defaultTargetsFilename)
 }
 
