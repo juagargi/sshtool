@@ -199,13 +199,24 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 }
 
 func runScript(machine *target, sshOptions []string, script string, output chan<- string, errors chan<- error) error {
-	remoteScript := "__forAll_script.sh"
-	cmd := exec.Command("scp", "-P", strconv.Itoa(int(machine.port)), script, "scion@"+machine.host+":/tmp/"+remoteScript)
-	err := cmd.Run()
-	if err != nil {
-		return err
-	}
-	return ssh(machine, sshOptions, "cd /tmp;chmod +x "+remoteScript+";. ~/.profile;./"+remoteScript+";EX=$?;rm "+remoteScript+";exit $EX", output, errors)
+	go func() {
+		remoteScript := "__forAll_script.sh"
+		cmd := exec.Command("scp", "-P", strconv.Itoa(int(machine.port)), script, "scion@"+machine.host+":/tmp/"+remoteScript)
+		err := cmd.Run()
+		if err != nil {
+			close(output)
+			errors <- err
+			close(errors)
+			return
+		}
+		err = ssh(machine, sshOptions, "cd /tmp;chmod +x "+remoteScript+";. ~/.profile;./"+remoteScript+";EX=$?;rm "+remoteScript+";exit $EX", output, errors)
+		if err != nil {
+			close(output)
+			errors <- err
+			close(errors)
+		}
+	}()
+	return nil
 }
 
 func allOfChannelWithTempFile(ch <-chan string, f *os.File) string {
@@ -250,7 +261,7 @@ func handleInterrupt(sig os.Signal) {
 	for _, i := range found {
 		fmt.Printf("%v\n", machines[i].host)
 	}
-
+	// confirm abort with user
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("Abort? (y/n) ")
 	text, _ := reader.ReadString('\n')
