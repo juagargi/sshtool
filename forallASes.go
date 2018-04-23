@@ -37,7 +37,7 @@ func loadMachinesFromLines(lines []string) []target {
 	for lineNumber := 1; lineNumber <= len(lines); lineNumber++ {
 		line := lines[lineNumber-1]
 		port := uint16(22)
-		if len(line) > 0 && line[0] == '#' {
+		if len(line) == 0 || line[0] == '#' {
 			continue
 		}
 		fields := separator.Split(line, -1)
