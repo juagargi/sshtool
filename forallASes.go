@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -24,11 +25,14 @@ var (
 		}
 		return filepath.Join(usr.HomeDir, ".scionlabTargetMachines")
 	}()
+	machines         = []target{}
+	summarizedOutput = make(map[string][]int) // output to machine index
 )
 
 type target struct {
 	host string
 	port uint16
+	done bool
 }
 
 func loadMachinesFromLines(lines []string) []target {
@@ -52,7 +56,7 @@ func loadMachinesFromLines(lines []string) []target {
 			port = uint16(longPort)
 			fallthrough
 		case 1:
-			machines = append(machines, target{host: fields[0], port: port})
+			machines = append(machines, target{host: fields[0], port: port, done: false})
 		default:
 			fmt.Println("Error parsing the targets file at line", lineNumber, ", expected host port but encountered", len(fields), " fields instead:", line)
 			os.Exit(1)
@@ -216,6 +220,47 @@ func allOfChannelWithTempFile(ch <-chan string, f *os.File) string {
 	return ret
 }
 
+func printSummary(heading string) {
+	outputIndex := 1
+	for k, v := range summarizedOutput {
+		fmt.Println("-----------------------------------------------")
+		fmt.Printf("-- %s %d / %d :\n", heading, outputIndex, len(summarizedOutput))
+		fmt.Println("---- BEGIN -----------------------------------")
+		fmt.Print(k)
+		fmt.Println("---- END --------------------------------------")
+		fmt.Println("For targets:")
+		for _, i := range v {
+			fmt.Printf("%v ", machines[i].host)
+		}
+		fmt.Println()
+		outputIndex++
+	}
+	fmt.Println("-----------------------------------------------")
+}
+
+func handleInterrupt(sig os.Signal) {
+	// print status
+	found := []int{}
+	for i, m := range machines {
+		if !m.done {
+			found = append(found, i)
+		}
+	}
+	fmt.Printf("\n%d pending jobs\n", len(found))
+	for i := range found {
+		fmt.Printf("%v\n", machines[i].host)
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Abort? (y/n) ")
+	text, _ := reader.ReadString('\n')
+	text = text[:len(text)-1]
+	if text == "y" {
+		printSummary("Partial Output")
+		os.Exit(100)
+	}
+}
+
 func usage() {
 	fmt.Printf(`Usage:
 %s {'commands && to be executed' | -f script_file_here_to_run_there.sh} [-o ssh_options] [-t targets_file | 'target1:port,target2,...']
@@ -279,13 +324,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	machines := loadMachines(targets)
+	machines = loadMachines(targets)
 
 	tempDir, err := ioutil.TempDir("", "__forallASes_temp_")
 	if err != nil {
 		fmt.Println("Error creating temporary directory:", err)
 		os.Exit(10)
 	}
+
+	signalChannel := make(chan os.Signal, 1)
+	// cleanupDone := make(chan bool)
+	signal.Notify(signalChannel, os.Interrupt)
+	go func() {
+		for s := range signalChannel {
+			handleInterrupt(s)
+		}
+	}()
 
 	fmt.Printf("Start ssh for %d machines\n", len(machines))
 	outputs := make([]chan string, len(machines))
@@ -331,29 +385,15 @@ func main() {
 		}(i)
 	}
 	// execution has finished here for all targets
-	summarizedOutput := make(map[string][]int) // output to machine index
+	// summarizedOutput := make(map[string][]int) // output to machine index
 	for i := 0; i < len(machines); i++ {
 		machineIdx := <-sync
+		machines[machineIdx].done = true
 		out := output[machineIdx]
 		summarizedOutput[out] = append(summarizedOutput[out], machineIdx)
 		fmt.Printf("    Done %d / %d        Machine %s \n", i+1, len(machines), machines[machineIdx].host)
 	}
-	// summarized output:
-	outputIndex := 1
-	for k, v := range summarizedOutput {
-		fmt.Println("-----------------------------------------------")
-		fmt.Printf("-- Output %d / %d :\n", outputIndex, len(summarizedOutput))
-		fmt.Println("---- BEGIN -----------------------------------")
-		fmt.Print(k)
-		fmt.Println("---- END --------------------------------------")
-		fmt.Println("For targets:")
-		for _, i := range v {
-			fmt.Printf("%v ", machines[i].host)
-		}
-		fmt.Println()
-		outputIndex++
-	}
-	fmt.Println("-----------------------------------------------")
+	printSummary("Output")
 
 	// errors:
 	donePrintErrorHeader := false
@@ -374,24 +414,11 @@ func main() {
 		if msgs != "" {
 			printErrorHeader()
 			// summarize the errors
+			msgs += "\n"
 			summarizedOutput[msgs] = append(summarizedOutput[msgs], i)
 		}
 	}
-	outputIndex = 1
-	for k, v := range summarizedOutput {
-		fmt.Println("-----------------------------------------------")
-		fmt.Printf("-- ERROR %d / %d :\n", outputIndex, len(summarizedOutput))
-		fmt.Println("---- BEGIN -----------------------------------")
-		fmt.Print(k)
-		fmt.Println("\n---- END --------------------------------------")
-		fmt.Println("For targets:")
-		for _, i := range v {
-			fmt.Printf("%v ", machines[i].host)
-		}
-		fmt.Println()
-		outputIndex++
-	}
-	fmt.Printf("----------------------------------------------------------------------------\n")
+	printSummary("ERROR")
 
 	// only now delete the temporary directory
 	err = os.RemoveAll(tempDir)
