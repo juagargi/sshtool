@@ -323,7 +323,7 @@ func main() {
 		summarizedOutput[out] = append(summarizedOutput[out], machineIdx)
 		fmt.Printf("    Done %d / %d        Machine %s \n", i+1, len(machines), machines[machineIdx].host)
 	}
-	// hashed output:
+	// summarized output:
 	outputIndex := 1
 	for k, v := range summarizedOutput {
 		fmt.Println("-----------------------------------------------")
@@ -332,7 +332,7 @@ func main() {
 		fmt.Print(k)
 		fmt.Println("---- END --------------------------------------")
 		fmt.Println("For targets:")
-		for i := range v {
+		for _, i := range v {
 			fmt.Printf("%v ", machines[i].host)
 		}
 		fmt.Println()
@@ -345,10 +345,10 @@ func main() {
 	printErrorHeader := func() {
 		if !donePrintErrorHeader {
 			fmt.Println("----------- ERRORS ---------------------------------------------------------")
-			fmt.Printf("----------------------------------------------------------------------------\n")
 			donePrintErrorHeader = true
 		}
 	}
+	summarizedOutput = make(map[string][]int)
 	for i, ch := range errors {
 		output[i] = ""
 		for x := range ch {
@@ -358,9 +358,23 @@ func main() {
 	for i, msgs := range output {
 		if msgs != "" {
 			printErrorHeader()
-			fmt.Printf("Errors from machine %v:\n", machines[i].host)
-			fmt.Printf("%s\n\n", msgs)
+			// summarize the errors
+			summarizedOutput[msgs] = append(summarizedOutput[msgs], i)
 		}
+	}
+	outputIndex = 1
+	for k, v := range summarizedOutput {
+		fmt.Println("-----------------------------------------------")
+		fmt.Printf("-- ERROR %d / %d :\n", outputIndex, len(summarizedOutput))
+		fmt.Println("---- BEGIN -----------------------------------")
+		fmt.Print(k)
+		fmt.Println("\n---- END --------------------------------------")
+		fmt.Println("For targets:")
+		for _, i := range v {
+			fmt.Printf("%v ", machines[i].host)
+		}
+		fmt.Println()
+		outputIndex++
 	}
 	fmt.Printf("----------------------------------------------------------------------------\n")
 
