@@ -247,7 +247,7 @@ func handleInterrupt(sig os.Signal) {
 		}
 	}
 	fmt.Printf("\n%d pending jobs\n", len(found))
-	for i := range found {
+	for _, i := range found {
 		fmt.Printf("%v\n", machines[i].host)
 	}
 
