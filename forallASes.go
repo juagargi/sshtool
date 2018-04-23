@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,21 +31,16 @@ type target struct {
 	port uint16
 }
 
-func loadMachines(targetsFile string) []target {
+func loadMachinesFromLines(lines []string) []target {
 	var machines []target
-	file, err := os.Open(targetsFile)
-	if err != nil {
-		fmt.Println("Error:", err)
-		os.Exit(1)
-	}
-
-	scanner := bufio.NewScanner(file)
-	for lineNumber := 1; scanner.Scan(); lineNumber++ {
+	separator := regexp.MustCompile("[\\s:]+")
+	for lineNumber := 1; lineNumber <= len(lines); lineNumber++ {
+		line := lines[lineNumber-1]
 		port := uint16(22)
-		if len(scanner.Text()) > 0 && scanner.Text()[0] == '#' {
+		if len(line) > 0 && line[0] == '#' {
 			continue
 		}
-		fields := strings.Fields(scanner.Text())
+		fields := separator.Split(line, -1)
 		switch len(fields) {
 		case 0:
 			continue
@@ -58,16 +54,35 @@ func loadMachines(targetsFile string) []target {
 		case 1:
 			machines = append(machines, target{host: fields[0], port: port})
 		default:
-			fmt.Println("Error parsing the targets file at line", lineNumber, ", expected host port but encountered", len(fields), " fields instead:", scanner.Text())
+			fmt.Println("Error parsing the targets file at line", lineNumber, ", expected host port but encountered", len(fields), " fields instead:", line)
 			os.Exit(1)
 		}
 	}
-	err = scanner.Err()
-	if err != nil {
-		fmt.Println("Error:", err)
-		os.Exit(1)
-	}
 	return machines
+}
+
+func loadMachines(targets string) []target {
+	// file or target list?
+	var lines []string
+	if _, err := os.Stat(targets); os.IsNotExist(err) {
+		lines = strings.Split(targets, ",")
+	} else {
+		file, err := os.Open(targets)
+		if err != nil {
+			fmt.Println("Error:", err)
+			os.Exit(1)
+		}
+		scanner := bufio.NewScanner(file)
+		for lineNumber := 1; scanner.Scan(); lineNumber++ {
+			lines = append(lines, scanner.Text())
+		}
+		err = scanner.Err()
+		if err != nil {
+			fmt.Println("Error:", err)
+			os.Exit(1)
+		}
+	}
+	return loadMachinesFromLines(lines)
 }
 
 func merge(cs ...<-chan string) <-chan string {
@@ -203,9 +218,9 @@ func allOfChannelWithTempFile(ch <-chan string, f *os.File) string {
 
 func usage() {
 	fmt.Printf(`Usage:
-%s {'commands && to be executed' | -f script_file_here_to_run_there.sh} [-o ssh_options] [-t targets_file]
+%s {'commands && to be executed' | -f script_file_here_to_run_there.sh} [-o ssh_options] [-t targets_file | 'target1:port,target2,...']
 
-If -t is not specified, the target machines file will be %s
+If -t is not specified, the target machines file will be %s . The targets file must contain one line per target, port is optional and separated by space or :
 Example of some of the ssh_options you can specify:
 -o ConnectTimeout=1 -o ConnectionAttempts=1
 etc.
@@ -217,7 +232,7 @@ func main() {
 	script := ""
 	command := ""
 	sshOptions := []string{}
-	targetsFile := defaultTargetsFilename
+	targets := defaultTargetsFilename
 	for i := 1; i < len(os.Args); i++ {
 		if os.Args[i] == "--help" || os.Args[i] == "-h" {
 			usage()
@@ -227,7 +242,7 @@ func main() {
 				usage()
 				return
 			}
-			targetsFile = os.Args[i+1]
+			targets = os.Args[i+1]
 			i++
 		} else if os.Args[i] == "-o" {
 			if len(os.Args) < i+2 {
@@ -264,7 +279,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	machines := loadMachines(targetsFile)
+	machines := loadMachines(targets)
 
 	tempDir, err := ioutil.TempDir("", "__forallASes_temp_")
 	if err != nil {
