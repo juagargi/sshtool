@@ -158,6 +158,8 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 	for _, o := range sshOptions {
 		arguments = append(arguments, "-o", o)
 	}
+	// export an environment variable per target with its name:
+	command = "export SSHTOOL_TARGET=\"" + machine.host + "\";" + command
 	arguments = append(arguments, "-t", "-p", strconv.Itoa(int(machine.port)), "scion@"+machine.host, command)
 	cmd := exec.Command("ssh", arguments...)
 
