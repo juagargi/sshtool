@@ -198,7 +198,7 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 	return nil
 }
 
-func runScript(machine *target, sshOptions []string, script string, output chan<- string, errors chan<- error) error {
+func runScript(machine *target, sshOptions []string, script string, scriptArgs []string, output chan<- string, errors chan<- error) error {
 	go func() {
 		remoteScript := "__forAll_script.sh"
 		cmd := exec.Command("scp", "-P", strconv.Itoa(int(machine.port)), script, "scion@"+machine.host+":/tmp/"+remoteScript)
@@ -209,7 +209,9 @@ func runScript(machine *target, sshOptions []string, script string, output chan<
 			close(errors)
 			return
 		}
-		err = ssh(machine, sshOptions, "cd /tmp;chmod +x "+remoteScript+";. ~/.profile;./"+remoteScript+";EX=$?;rm "+remoteScript+";exit $EX", output, errors)
+		// susceptible to injection, but it's okay as we allow execution of anything anyways:
+		scriptLine := "/tmp/" + remoteScript + " " + strings.Join(scriptArgs, " ") + ";EX=$?"
+		err = ssh(machine, sshOptions, "cd /tmp;chmod +x "+remoteScript+";. ~/.profile;"+scriptLine+";rm "+remoteScript+";exit $EX", output, errors)
 		if err != nil {
 			close(output)
 			errors <- err
@@ -287,6 +289,7 @@ func main() {
 	var commands []string
 	script := ""
 	command := ""
+	scriptArgs := []string{}
 	sshOptions := []string{}
 	targets := defaultTargetsFilename
 	for i := 1; i < len(os.Args); i++ {
@@ -316,10 +319,10 @@ func main() {
 			i++
 		} else {
 			if script != "" {
-				usage()
-				return
+				scriptArgs = append(scriptArgs, os.Args[i])
+			} else {
+				commands = append(commands, os.Args[i])
 			}
-			commands = append(commands, os.Args[i])
 		}
 	}
 	if script == "" {
@@ -375,7 +378,7 @@ func main() {
 		if script == "" {
 			err = ssh(&machines[i], sshOptions, command, outputs[i], errors[i])
 		} else {
-			err = runScript(&machines[i], sshOptions, script, outputs[i], errors[i])
+			err = runScript(&machines[i], sshOptions, script, scriptArgs, outputs[i], errors[i])
 		}
 		if err != nil {
 			close(outputs[i])
