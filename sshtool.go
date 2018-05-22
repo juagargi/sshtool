@@ -402,12 +402,14 @@ func main() {
 	sync := make(chan int, len(machines))
 	for i := 0; i < len(machines); i++ {
 		go func(i int) {
-			output[i] = allOfChannelWithTempFile(outputs[i], tempFiles[i])
+			str := allOfChannelWithTempFile(outputs[i], tempFiles[i])
+			// replace the occurrences of the machine names with SSHTOOL_TARGET, to unclutter output
+			output[i] = strings.Replace(str, machines[i].host, "\"$SSHTOOL_TARGET\"", -1)
 			sync <- i
 		}(i)
 	}
 	// execution has finished here for all targets
-	// summarizedOutput := make(map[string][]int) // output to machine index
+
 	for i := 0; i < len(machines); i++ {
 		machineIdx := <-sync
 		machines[machineIdx].done = true
@@ -429,7 +431,8 @@ func main() {
 	for i, ch := range errors {
 		output[i] = ""
 		for x := range ch {
-			output[i] += fmt.Sprintf("%v", x)
+			// replace the occurrences of the machine names with SSHTOOL_TARGET, to unclutter output
+			output[i] += strings.Replace(x.Error(), machines[i].host, "\"$SSHTOOL_TARGET\"", -1)
 		}
 	}
 	for i, msgs := range output {
