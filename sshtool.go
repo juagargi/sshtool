@@ -277,15 +277,20 @@ func handleInterrupt(sig os.Signal) {
 }
 
 func usage() {
-	fmt.Printf(`Usage:
-%s {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]} [-o ssh_options] [-t targets_file | 'target1:port,target2,...']
+	fmt.Printf(`Usage: sshtool CMDS -t TARGETS -o OPTS
+Executes CMDS commands in the TARGETS targets, with ssh options OPTS.
+
+CMDS        {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]}
+TARGETS     {targets_file | 'target1:port,target2,...'}
+OPTS        {ssh_options}
 
 If -t is not specified, the target machines file will be %s . The targets file must contain one line per target, port is optional and separated by space or :
-Example of some of the ssh_options you can specify:
--o ConnectTimeout=1 -o ConnectionAttempts=1
-etc.
 On each target, the environment variable SSHTOOL_TARGET will be defined with the name of the target.
-`, os.Args[0], defaultTargetsFilename)
+
+Examples:
+sshtool -t 'as1-11,as1-12' -f myscript.sh arg1
+sshtool -o ConnectTimeout=1 -o ConnectionAttempts=1 -t ~/scionlabTargets.all 'cd $SC; ./scion.sh status'
+`, defaultTargetsFilename)
 }
 
 func main() {
