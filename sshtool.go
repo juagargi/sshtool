@@ -153,15 +153,12 @@ func FileToChannel(file io.Reader) (chan string, chan error) {
 }
 
 func ssh(machine *target, sshOptions []string, command string, output chan<- string, errors chan<- error) error {
-	sshOptions = append(sshOptions, "LogLevel=QUIET")
-	arguments := []string{}
-	for _, o := range sshOptions {
-		arguments = append(arguments, "-o", o)
-	}
+	sshOptions = append(sshOptions, "-o", "LogLevel=QUIET")
+
 	// export an environment variable per target with its name:
 	command = "export SSHTOOL_TARGET=\"" + machine.host + "\";" + command
-	arguments = append(arguments, "-t", "-p", strconv.Itoa(int(machine.port)), "scion@"+machine.host, command)
-	cmd := exec.Command("ssh", arguments...)
+	sshOptions = append(sshOptions, "-t", "-p", strconv.Itoa(int(machine.port)), "scion@"+machine.host, command)
+	cmd := exec.Command("ssh", sshOptions...)
 
 	// cmd.Stdin=os.Stdin would cause problems with the terminal running this application (2nd instance of ssh and beyond)
 	// so we use the default behavior which is to open os.Devnull
@@ -316,7 +313,14 @@ func main() {
 				usage()
 				return
 			}
-			sshOptions = append(sshOptions, os.Args[i+1])
+			sshOptions = append(sshOptions, "-o", os.Args[i+1])
+			i++
+		} else if os.Args[i] == "-i" {
+			if len(os.Args) < i+2 {
+				usage()
+				return
+			}
+			sshOptions = append(sshOptions, "-i", os.Args[i+1])
 			i++
 		} else if os.Args[i] == "-f" {
 			if len(os.Args) < i+2 || len(commands) > 0 {
