@@ -274,12 +274,13 @@ func handleInterrupt(sig os.Signal) {
 }
 
 func usage() {
-	fmt.Printf(`Usage: sshtool CMDS -t TARGETS -o OPTS
+	fmt.Printf(`Usage: sshtool [--verbatim] CMDS -t TARGETS -o OPTS -i OPTS
 Executes CMDS commands in the TARGETS targets, with ssh options OPTS.
 
 CMDS        {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]}
 TARGETS     {targets_file | 'target1:port,target2,...'}
 OPTS        {ssh_options}
+--verbatim  Don't do summary replacements with the target names
 
 If -t is not specified, the target machines file will be %s . The targets file must contain one line per target, port is optional and separated by space or :
 On each target, the environment variable SSHTOOL_TARGET will be defined with the name of the target.
@@ -297,6 +298,7 @@ func main() {
 	scriptArgs := []string{}
 	sshOptions := []string{}
 	targets := defaultTargetsFilename
+	replaceInSummary := true
 	for i := 1; i < len(os.Args); i++ {
 		if os.Args[i] == "--help" || os.Args[i] == "-h" {
 			usage()
@@ -329,6 +331,8 @@ func main() {
 			}
 			script = os.Args[i+1]
 			i++
+		} else if os.Args[i] == "--verbatim" {
+			replaceInSummary = false
 		} else {
 			if script != "" {
 				scriptArgs = append(scriptArgs, os.Args[i])
@@ -407,8 +411,11 @@ func main() {
 	for i := 0; i < len(machines); i++ {
 		go func(i int) {
 			str := allOfChannelWithTempFile(outputs[i], tempFiles[i])
-			// replace the occurrences of the machine names with SSHTOOL_TARGET, to unclutter output
-			output[i] = strings.Replace(str, machines[i].host, "\"$SSHTOOL_TARGET\"", -1)
+			if replaceInSummary {
+				// replace the occurrences of the machine names with SSHTOOL_TARGET, to unclutter output
+				str = strings.Replace(str, machines[i].host, "\"$SSHTOOL_TARGET\"", -1)
+			}
+			output[i] = str
 			sync <- i
 		}(i)
 	}
@@ -436,7 +443,11 @@ func main() {
 		output[i] = ""
 		for x := range ch {
 			// replace the occurrences of the machine names with SSHTOOL_TARGET, to unclutter output
-			output[i] += strings.Replace(x.Error(), machines[i].host, "\"$SSHTOOL_TARGET\"", -1)
+			str := x.Error()
+			if replaceInSummary {
+				str = strings.Replace(str, machines[i].host, "\"$SSHTOOL_TARGET\"", -1)
+			}
+			output[i] += str
 		}
 	}
 	for i, msgs := range output {
