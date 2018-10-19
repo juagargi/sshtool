@@ -335,7 +335,7 @@ func main() {
 			replaceInSummary = false
 		} else {
 			if script != "" {
-				scriptArgs = append(scriptArgs, os.Args[i])
+				scriptArgs = append(scriptArgs, fmt.Sprintf("\"%s\"", os.Args[i]))
 			} else {
 				commands = append(commands, os.Args[i])
 			}
