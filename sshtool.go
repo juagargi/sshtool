@@ -11,7 +11,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -31,7 +30,6 @@ var (
 
 type target struct {
 	host string
-	port uint16
 	done bool
 }
 
@@ -40,7 +38,6 @@ func loadMachinesFromLines(lines []string) []target {
 	separator := regexp.MustCompile("[\\s:]+")
 	for lineNumber := 1; lineNumber <= len(lines); lineNumber++ {
 		line := lines[lineNumber-1]
-		port := uint16(22)
 		if len(line) == 0 || line[0] == '#' {
 			continue
 		}
@@ -48,17 +45,10 @@ func loadMachinesFromLines(lines []string) []target {
 		switch len(fields) {
 		case 0:
 			continue
-		case 2:
-			longPort, err := strconv.ParseUint(fields[1], 10, 16)
-			if err != nil {
-				fmt.Println("Error parsing the targets file at line", lineNumber, ", expecting host port:", err)
-			}
-			port = uint16(longPort)
-			fallthrough
 		case 1:
-			machines = append(machines, target{host: fields[0], port: port, done: false})
+			machines = append(machines, target{host: fields[0], done: false})
 		default:
-			fmt.Println("Error parsing the targets file at line", lineNumber, ", expected host port but encountered", len(fields), " fields instead:", line)
+			fmt.Println("Error parsing the targets file at line", lineNumber, ", expected host but encountered", len(fields), " fields instead:", line)
 			os.Exit(1)
 		}
 	}
@@ -157,7 +147,7 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 
 	// export an environment variable per target with its name:
 	command = "export SSHTOOL_TARGET=\"" + machine.host + "\";" + command
-	sshOptions = append(sshOptions, "-t", "-p", strconv.Itoa(int(machine.port)), "scion@"+machine.host, command)
+	sshOptions = append(sshOptions, "-t", machine.host, command)
 	cmd := exec.Command("ssh", sshOptions...)
 
 	// cmd.Stdin=os.Stdin would cause problems with the terminal running this application (2nd instance of ssh and beyond)
@@ -200,7 +190,7 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 func runScript(machine *target, sshOptions []string, script string, scriptArgs []string, output chan<- string, errors chan<- error) error {
 	go func() {
 		remoteScript := "__forAll_script.sh"
-		cmd := exec.Command("scp", "-P", strconv.Itoa(int(machine.port)), script, "scion@"+machine.host+":/tmp/"+remoteScript)
+		cmd := exec.Command("scp", script, machine.host+":/tmp/"+remoteScript)
 		err := cmd.Run()
 		if err != nil {
 			close(output)
@@ -278,11 +268,11 @@ func usage() {
 Executes CMDS commands in the TARGETS targets, with ssh options OPTS.
 
 CMDS        {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]}
-TARGETS     {targets_file | 'target1:port,target2,...'}
+TARGETS     {targets_file | 'target1,target2,...'}
 OPTS        {ssh_options}
 --verbatim  Don't do summary replacements with the target names
 
-If -t is not specified, the target machines file will be %s . The targets file must contain one line per target, port is optional and separated by space or :
+If -t is not specified, the target machines file will be %s . The targets file must contain one line per target.
 On each target, the environment variable SSHTOOL_TARGET will be defined with the name of the target.
 
 Examples:
