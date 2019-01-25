@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -187,9 +189,17 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 	return nil
 }
 
+func getUniqueScriptName(script string) string {
+	uniqueStr, err := makeUuid()
+	if err != nil {
+		uniqueStr = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("__sshtool_%s_%s", uniqueStr, script)
+}
+
 func runScript(machine *target, sshOptions []string, script string, scriptArgs []string, output chan<- string, errors chan<- error) error {
 	go func() {
-		remoteScript := "__forAll_script.sh"
+		remoteScript := getUniqueScriptName(script)
 		cmd := exec.Command("scp", script, machine.host+":/tmp/"+remoteScript)
 		err := cmd.Run()
 		if err != nil {
@@ -462,4 +472,13 @@ func main() {
 	} else {
 		fmt.Println("End!")
 	}
+}
+
+func makeUuid() (string, error) {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
