@@ -194,7 +194,7 @@ func getUniqueScriptName(script string) string {
 	if err != nil {
 		uniqueStr = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
-	return fmt.Sprintf("__sshtool_%s_%s", uniqueStr, script)
+	return fmt.Sprintf("__sshtool_%s_%s", uniqueStr, filepath.Base(script))
 }
 
 func runScript(machine *target, sshOptions []string, script string, scriptArgs []string, output chan<- string, errors chan<- error) error {
