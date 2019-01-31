@@ -28,14 +28,15 @@ func testMakeUuidOnce(t *testing.T) {
 
 func TestGetUniqueScriptName(t *testing.T) {
 	script := "foo-bar.sh"
+	scriptPath := "foo/" + script
 	expectedFormat := fmt.Sprintf("^__sshtool_[^_]+_%s$", regexp.QuoteMeta(script))
-	uniqueName := getUniqueScriptName(script)
+	uniqueName := getUniqueScriptName(scriptPath)
 	match, _ := regexp.MatchString(expectedFormat, uniqueName)
 	if !match {
 		t.Fatal("Uniquified script name does not match expected format", uniqueName)
 	}
 	// Fails with probability 2^-128 for random uuids
-	uniqueName2 := getUniqueScriptName(script)
+	uniqueName2 := getUniqueScriptName(scriptPath)
 	if uniqueName == uniqueName2 {
 		t.Fatal("Uniquified script name not unique", uniqueName, uniqueName2)
 	}
@@ -43,5 +44,4 @@ func TestGetUniqueScriptName(t *testing.T) {
 	if !match {
 		t.Fatal("Unique-ified script name does not match expected format", uniqueName2)
 	}
-
 }
