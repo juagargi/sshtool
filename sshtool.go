@@ -28,6 +28,7 @@ var (
 	}()
 	machines         = []target{}
 	summarizedOutput = make(map[string][]int) // output to machine index
+	verbose          = false
 )
 
 type target struct {
@@ -47,6 +48,8 @@ func main() {
 		if os.Args[i] == "--help" || os.Args[i] == "-h" {
 			usage()
 			return
+		} else if os.Args[i] == "--verbose" || os.Args[i] == "-v" {
+			verbose = true
 		} else if os.Args[i] == "-t" {
 			if len(os.Args) < i+2 {
 				usage()
@@ -219,7 +222,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Printf(`Usage: sshtool [--verbatim] -t TARGETS -o OPTS -i IDENT_FILE CMDS
+	fmt.Printf(`Usage: sshtool [--verbatim] [--verbose | -v] -t TARGETS -o OPTS -i IDENT_FILE CMDS
 Executes CMDS commands in the TARGETS targets, with ssh options OPTS.
 
 CMDS        {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]}
@@ -227,6 +230,7 @@ TARGETS     {targets_file | 'target1,target2,...'}
 OPTS        {ssh_options}
 IDENT_FILE  {identity file passed to ssh with -i}
 --verbatim  Don't do summary replacements with the target names
+--verbose   Be verbose when outputting
 
 If -t is not specified, the target machines file will be %s . The targets file must contain one line per target.
 On each target, the environment variable SSHTOOL_TARGET will be defined with the name of the target.
@@ -261,6 +265,9 @@ func loadMachinesFromLines(lines []string) []target {
 
 func loadMachines(targets string) []target {
 	// file or target list?
+	if verbose {
+		fmt.Printf("[sshtool] Loading targets from %s\n", targets)
+	}
 	var lines []string
 	if _, err := os.Stat(targets); os.IsNotExist(err) {
 		lines = strings.Split(targets, ",")
@@ -353,6 +360,9 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 	command = "export SSHTOOL_TARGET=\"" + machine.host + "\";" + command
 	sshOptions = append(sshOptions, "-t", machine.host, command)
 	cmd := exec.Command("ssh", sshOptions...)
+	if verbose {
+		fmt.Printf("[sshtool] CMD = %s\n", strings.Join(cmd.Args, " "))
+	}
 
 	// cmd.Stdin=os.Stdin would cause problems with the terminal running this application (2nd instance of ssh and beyond)
 	// so we use the default behavior which is to open os.Devnull
@@ -396,13 +406,20 @@ func getUniqueScriptName(script string) string {
 	if err != nil {
 		uniqueStr = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
-	return fmt.Sprintf("__sshtool_%s_%s", uniqueStr, filepath.Base(script))
+	name := fmt.Sprintf("__sshtool_%s_%s", uniqueStr, filepath.Base(script))
+	if verbose {
+		fmt.Printf("[sshtool] script name is %s\n", name)
+	}
+	return name
 }
 
 func runScript(machine *target, sshOptions []string, script string, scriptArgs []string, output chan<- string, errors chan<- error) error {
 	go func() {
 		remoteScript := getUniqueScriptName(script)
 		cmd := exec.Command("scp", script, machine.host+":/tmp/"+remoteScript)
+		if verbose {
+			fmt.Printf("[sshtool] runScript copy file CMD = %s\n", strings.Join(cmd.Args, " "))
+		}
 		err := cmd.Run()
 		if err != nil {
 			close(output)
