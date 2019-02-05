@@ -8,12 +8,12 @@ import (
 
 func TestMakeUuid(t *testing.T) {
 	for i := 0; i < 16; i++ {
-		t.Run("testMakeUuid", testMakeUuidOnce)
+		t.Run("testMakeUuid", testMakeUUIDOnce)
 	}
 }
 
-func testMakeUuidOnce(t *testing.T) {
-	uuid, err := makeUuid()
+func testMakeUUIDOnce(t *testing.T) {
+	uuid, err := makeUUID()
 	if err != nil {
 		if uuid != "" {
 			t.FailNow()

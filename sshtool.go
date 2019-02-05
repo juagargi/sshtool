@@ -190,7 +190,7 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 }
 
 func getUniqueScriptName(script string) string {
-	uniqueStr, err := makeUuid()
+	uniqueStr, err := makeUUID()
 	if err != nil {
 		uniqueStr = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
@@ -474,7 +474,7 @@ func main() {
 	}
 }
 
-func makeUuid() (string, error) {
+func makeUUID() (string, error) {
 	b := make([]byte, 16)
 	_, err := rand.Read(b)
 	if err != nil {
