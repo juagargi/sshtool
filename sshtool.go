@@ -42,6 +42,7 @@ func main() {
 	command := ""
 	scriptArgs := []string{}
 	sshOptions := []string{}
+	pathToCopy := ""
 	targets := defaultTargetsFilename
 	replaceInSummary := true
 	for i := 1; i < len(os.Args); i++ {
@@ -71,6 +72,13 @@ func main() {
 			}
 			sshOptions = append(sshOptions, "-i", os.Args[i+1])
 			i++
+		} else if os.Args[i] == "-c" {
+			if len(os.Args) < i+2 {
+				usage()
+				return
+			}
+			pathToCopy = os.Args[i+1]
+			i++
 		} else if os.Args[i] == "-f" {
 			if len(os.Args) < i+2 || len(commands) > 0 {
 				usage()
@@ -88,15 +96,15 @@ func main() {
 			}
 		}
 	}
-	if script == "" {
-		if len(commands) == 0 {
-			usage()
-			return
-		}
+	if script == "" && len(commands) == 0 && pathToCopy == "" {
+		usage()
+		return
+	}
+	if script == "" && len(commands) > 0 {
 		command = strings.Join(commands, ";")
 		// amend command:
 		command = ". ~/.profile;" + command
-	} else if _, err := os.Stat(script); err != nil {
+	} else if _, err := os.Stat(script); script != "" && err != nil {
 		fmt.Println("Error with script file:", err)
 		os.Exit(1)
 	}
@@ -138,10 +146,21 @@ func main() {
 	}
 	setter := func(i int) {
 		var err error
-		if script == "" {
+		if pathToCopy != "" {
+			err = remoteCopySrcToDst(&machines[i], pathToCopy, "/tmp/"+pathToCopy)
+		}
+		if err != nil {
+			close(outputs[i])
+			errors[i] <- err
+			close(errors[i])
+		}
+		if script != "" {
+			err = runScript(&machines[i], sshOptions, script, scriptArgs, outputs[i], errors[i])
+		} else if command != "" {
 			err = ssh(&machines[i], sshOptions, command, outputs[i], errors[i])
 		} else {
-			err = runScript(&machines[i], sshOptions, script, scriptArgs, outputs[i], errors[i])
+			close(outputs[i])
+			close(errors[i])
 		}
 		if err != nil {
 			close(outputs[i])
@@ -222,13 +241,14 @@ func main() {
 }
 
 func usage() {
-	fmt.Printf(`Usage: sshtool [--verbatim] [--verbose | -v] -t TARGETS -o OPTS -i IDENT_FILE CMDS
+	fmt.Printf(`Usage: sshtool [--verbatim] [--verbose | -v] -t TARGETS -o OPTS -i IDENT_FILE [-c FILE_OR_DIR] CMDS
 Executes CMDS commands in the TARGETS targets, with ssh options OPTS.
 
 CMDS        {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]}
 TARGETS     {targets_file | 'target1,target2,...'}
 OPTS        {ssh_options}
-IDENT_FILE  {identity file passed to ssh with -i}
+IDENT_FILE  identity file passed to ssh with -i
+FILE_OR_DIR File or directory to copy to targets. It will be copied to target:/tmp/$FILE_OR_DIR
 --verbatim  Don't do summary replacements with the target names
 --verbose   Be verbose when outputting
 
@@ -238,6 +258,7 @@ On each target, the environment variable SSHTOOL_TARGET will be defined with the
 Examples:
 sshtool -t 'as1-11,as1-12' -f myscript.sh arg1
 sshtool -o ConnectTimeout=1 -o ConnectionAttempts=1 -t ~/scionlabTargets.all 'cd $SC; ./scion.sh status'
+sshtool -t as1-17 -c $SC/gen 'cd $SC; mv /tmp/gen gen.nextversion'
 `, defaultTargetsFilename)
 }
 
@@ -353,6 +374,8 @@ func FileToChannel(file io.Reader) (chan string, chan error) {
 	return ch, errch
 }
 
+// ssh is an asynchronous function: it will run in the background reading stdout and stderr
+// ssh returns an error if unable to start the ssh connection
 func ssh(machine *target, sshOptions []string, command string, output chan<- string, errors chan<- error) error {
 	sshOptions = append(sshOptions, "-o", "LogLevel=QUIET")
 
@@ -401,6 +424,25 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 	return nil
 }
 
+// returns output, error
+func synchronousSSH(machine *target, command string) ([]string, error) {
+	output := []string{}
+	stdout := make(chan string)
+	stderr := make(chan error)
+	err := ssh(machine, []string{}, command, stdout, stderr)
+	if err != nil {
+		return output, err
+	}
+	// block until done (quit if errors)
+	for err := range stderr {
+		return output, err
+	}
+	for str := range stdout {
+		output = append(output, str)
+	}
+	return output, nil
+}
+
 func getUniqueScriptName(script string) string {
 	uniqueStr, err := makeUUID()
 	if err != nil {
@@ -413,14 +455,27 @@ func getUniqueScriptName(script string) string {
 	return name
 }
 
+func remoteCopySrcToDst(machine *target, srcPath, dstPath string) error {
+	// remove possibly existing target
+	if !strings.HasPrefix(dstPath, "/tmp/") {
+		// it's too dangerous otherwise to remove anything like we do
+		return fmt.Errorf("SSHTOOL internal: cowardly refusing to remove and copy to anywhere but /tmp/")
+	}
+	_, err := synchronousSSH(machine, "rm -rf "+dstPath)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("scp", "-r", srcPath, machine.host+":"+dstPath)
+	if verbose {
+		fmt.Printf("[sshtool] copy file CMD = %s\n", strings.Join(cmd.Args, " "))
+	}
+	return cmd.Run()
+}
+
 func runScript(machine *target, sshOptions []string, script string, scriptArgs []string, output chan<- string, errors chan<- error) error {
 	go func() {
 		remoteScript := getUniqueScriptName(script)
-		cmd := exec.Command("scp", script, machine.host+":/tmp/"+remoteScript)
-		if verbose {
-			fmt.Printf("[sshtool] runScript copy file CMD = %s\n", strings.Join(cmd.Args, " "))
-		}
-		err := cmd.Run()
+		err := remoteCopySrcToDst(machine, script, "/tmp/"+remoteScript)
 		if err != nil {
 			close(output)
 			errors <- err
