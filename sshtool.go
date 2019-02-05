@@ -35,6 +35,208 @@ type target struct {
 	done bool
 }
 
+func main() {
+	var commands []string
+	script := ""
+	command := ""
+	scriptArgs := []string{}
+	sshOptions := []string{}
+	targets := defaultTargetsFilename
+	replaceInSummary := true
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "--help" || os.Args[i] == "-h" {
+			usage()
+			return
+		} else if os.Args[i] == "-t" {
+			if len(os.Args) < i+2 {
+				usage()
+				return
+			}
+			targets = os.Args[i+1]
+			i++
+		} else if os.Args[i] == "-o" {
+			if len(os.Args) < i+2 {
+				usage()
+				return
+			}
+			sshOptions = append(sshOptions, "-o", os.Args[i+1])
+			i++
+		} else if os.Args[i] == "-i" {
+			if len(os.Args) < i+2 {
+				usage()
+				return
+			}
+			sshOptions = append(sshOptions, "-i", os.Args[i+1])
+			i++
+		} else if os.Args[i] == "-f" {
+			if len(os.Args) < i+2 || len(commands) > 0 {
+				usage()
+				return
+			}
+			script = os.Args[i+1]
+			i++
+		} else if os.Args[i] == "--verbatim" {
+			replaceInSummary = false
+		} else {
+			if script != "" {
+				scriptArgs = append(scriptArgs, fmt.Sprintf("\"%s\"", os.Args[i]))
+			} else {
+				commands = append(commands, os.Args[i])
+			}
+		}
+	}
+	if script == "" {
+		if len(commands) == 0 {
+			usage()
+			return
+		}
+		command = strings.Join(commands, ";")
+		// amend command:
+		command = ". ~/.profile;" + command
+	} else if _, err := os.Stat(script); err != nil {
+		fmt.Println("Error with script file:", err)
+		os.Exit(1)
+	}
+
+	machines = loadMachines(targets)
+
+	tempDir, err := ioutil.TempDir("", "__forallASes_temp_")
+	if err != nil {
+		fmt.Println("Error creating temporary directory:", err)
+		os.Exit(10)
+	}
+
+	signalChannel := make(chan os.Signal, 1)
+	// cleanupDone := make(chan bool)
+	signal.Notify(signalChannel, os.Interrupt)
+	go func() {
+		for s := range signalChannel {
+			handleInterrupt(s)
+		}
+	}()
+
+	fmt.Printf("Start ssh for %d machines\n", len(machines))
+	outputs := make([]chan string, len(machines))
+	errors := make([]chan error, len(machines))
+	tempFiles := make([]*os.File, len(machines))
+	for i := range machines {
+		outputs[i] = make(chan string)
+		errors[i] = make(chan error)
+
+		tempFile := fmt.Sprintf("channel_%s", machines[i].host)
+		tempFile = filepath.Join(tempDir, tempFile)
+		f, err := os.Create(tempFile)
+		if err != nil {
+			fmt.Printf("ERROR: cannot open temp file %s: %v", tempFile, err)
+			os.Exit(30)
+		}
+		defer f.Close()
+		tempFiles[i] = f
+	}
+	setter := func(i int) {
+		var err error
+		if script == "" {
+			err = ssh(&machines[i], sshOptions, command, outputs[i], errors[i])
+		} else {
+			err = runScript(&machines[i], sshOptions, script, scriptArgs, outputs[i], errors[i])
+		}
+		if err != nil {
+			close(outputs[i])
+			errors[i] <- err
+			close(errors[i])
+		}
+		fmt.Printf("Started %d / %d\n", i+1, len(machines))
+	}
+	for i := range machines {
+		go setter(i)
+	}
+	output := make([]string, len(machines))
+	sync := make(chan int, len(machines))
+	for i := 0; i < len(machines); i++ {
+		go func(i int) {
+			str := allOfChannelWithTempFile(outputs[i], tempFiles[i])
+			if replaceInSummary {
+				// replace the occurrences of the machine names with SSHTOOL_TARGET, to unclutter output
+				str = strings.Replace(str, machines[i].host, "\"$SSHTOOL_TARGET\"", -1)
+			}
+			output[i] = str
+			sync <- i
+		}(i)
+	}
+	// execution has finished here for all targets
+
+	for i := 0; i < len(machines); i++ {
+		machineIdx := <-sync
+		machines[machineIdx].done = true
+		out := output[machineIdx]
+		summarizedOutput[out] = append(summarizedOutput[out], machineIdx)
+		fmt.Printf("    Done %d / %d        Machine %s \n", i+1, len(machines), machines[machineIdx].host)
+	}
+	printSummary("Output")
+
+	// errors:
+	donePrintErrorHeader := false
+	printErrorHeader := func() {
+		if !donePrintErrorHeader {
+			fmt.Println("----------- ERRORS ---------------------------------------------------------")
+			donePrintErrorHeader = true
+		}
+	}
+	summarizedOutput = make(map[string][]int)
+	for i, ch := range errors {
+		output[i] = ""
+		for x := range ch {
+			// replace the occurrences of the machine names with SSHTOOL_TARGET, to unclutter output
+			str := x.Error()
+			if replaceInSummary {
+				str = strings.Replace(str, machines[i].host, "\"$SSHTOOL_TARGET\"", -1)
+			}
+			output[i] += str
+		}
+	}
+	for i, msgs := range output {
+		if msgs != "" {
+			printErrorHeader()
+			// summarize the errors
+			msgs += "\n"
+			summarizedOutput[msgs] = append(summarizedOutput[msgs], i)
+		}
+	}
+	printSummary("ERROR")
+
+	// only now delete the temporary directory
+	err = os.RemoveAll(tempDir)
+	if err != nil {
+		fmt.Printf("Error removing temp directory %s: %v\n", tempDir, err)
+		os.Exit(20)
+	}
+	if donePrintErrorHeader {
+		fmt.Println("Finished with errors")
+		os.Exit(1)
+	} else {
+		fmt.Println("End!")
+	}
+}
+
+func usage() {
+	fmt.Printf(`Usage: sshtool [--verbatim] -t TARGETS -o OPTS -i IDENT_FILE CMDS
+Executes CMDS commands in the TARGETS targets, with ssh options OPTS.
+
+CMDS        {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]}
+TARGETS     {targets_file | 'target1,target2,...'}
+OPTS        {ssh_options}
+IDENT_FILE  {identity file passed to ssh with -i}
+--verbatim  Don't do summary replacements with the target names
+
+If -t is not specified, the target machines file will be %s . The targets file must contain one line per target.
+On each target, the environment variable SSHTOOL_TARGET will be defined with the name of the target.
+
+Examples:
+sshtool -t 'as1-11,as1-12' -f myscript.sh arg1
+sshtool -o ConnectTimeout=1 -o ConnectionAttempts=1 -t ~/scionlabTargets.all 'cd $SC; ./scion.sh status'
+`, defaultTargetsFilename)
+}
+
 func loadMachinesFromLines(lines []string) []target {
 	var machines []target
 	separator := regexp.MustCompile("[\\s:]+")
@@ -270,207 +472,6 @@ func handleInterrupt(sig os.Signal) {
 	if text == "y" {
 		printSummary("Partial Output")
 		os.Exit(100)
-	}
-}
-
-func usage() {
-	fmt.Printf(`Usage: sshtool [--verbatim] CMDS -t TARGETS -o OPTS -i OPTS
-Executes CMDS commands in the TARGETS targets, with ssh options OPTS.
-
-CMDS        {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]}
-TARGETS     {targets_file | 'target1,target2,...'}
-OPTS        {ssh_options}
---verbatim  Don't do summary replacements with the target names
-
-If -t is not specified, the target machines file will be %s . The targets file must contain one line per target.
-On each target, the environment variable SSHTOOL_TARGET will be defined with the name of the target.
-
-Examples:
-sshtool -t 'as1-11,as1-12' -f myscript.sh arg1
-sshtool -o ConnectTimeout=1 -o ConnectionAttempts=1 -t ~/scionlabTargets.all 'cd $SC; ./scion.sh status'
-`, defaultTargetsFilename)
-}
-
-func main() {
-	var commands []string
-	script := ""
-	command := ""
-	scriptArgs := []string{}
-	sshOptions := []string{}
-	targets := defaultTargetsFilename
-	replaceInSummary := true
-	for i := 1; i < len(os.Args); i++ {
-		if os.Args[i] == "--help" || os.Args[i] == "-h" {
-			usage()
-			return
-		} else if os.Args[i] == "-t" {
-			if len(os.Args) < i+2 {
-				usage()
-				return
-			}
-			targets = os.Args[i+1]
-			i++
-		} else if os.Args[i] == "-o" {
-			if len(os.Args) < i+2 {
-				usage()
-				return
-			}
-			sshOptions = append(sshOptions, "-o", os.Args[i+1])
-			i++
-		} else if os.Args[i] == "-i" {
-			if len(os.Args) < i+2 {
-				usage()
-				return
-			}
-			sshOptions = append(sshOptions, "-i", os.Args[i+1])
-			i++
-		} else if os.Args[i] == "-f" {
-			if len(os.Args) < i+2 || len(commands) > 0 {
-				usage()
-				return
-			}
-			script = os.Args[i+1]
-			i++
-		} else if os.Args[i] == "--verbatim" {
-			replaceInSummary = false
-		} else {
-			if script != "" {
-				scriptArgs = append(scriptArgs, fmt.Sprintf("\"%s\"", os.Args[i]))
-			} else {
-				commands = append(commands, os.Args[i])
-			}
-		}
-	}
-	if script == "" {
-		if len(commands) == 0 {
-			usage()
-			return
-		}
-		command = strings.Join(commands, ";")
-		// amend command:
-		command = ". ~/.profile;" + command
-	} else if _, err := os.Stat(script); err != nil {
-		fmt.Println("Error with script file:", err)
-		os.Exit(1)
-	}
-
-	machines = loadMachines(targets)
-
-	tempDir, err := ioutil.TempDir("", "__forallASes_temp_")
-	if err != nil {
-		fmt.Println("Error creating temporary directory:", err)
-		os.Exit(10)
-	}
-
-	signalChannel := make(chan os.Signal, 1)
-	// cleanupDone := make(chan bool)
-	signal.Notify(signalChannel, os.Interrupt)
-	go func() {
-		for s := range signalChannel {
-			handleInterrupt(s)
-		}
-	}()
-
-	fmt.Printf("Start ssh for %d machines\n", len(machines))
-	outputs := make([]chan string, len(machines))
-	errors := make([]chan error, len(machines))
-	tempFiles := make([]*os.File, len(machines))
-	for i := range machines {
-		outputs[i] = make(chan string)
-		errors[i] = make(chan error)
-
-		tempFile := fmt.Sprintf("channel_%s", machines[i].host)
-		tempFile = filepath.Join(tempDir, tempFile)
-		f, err := os.Create(tempFile)
-		if err != nil {
-			fmt.Printf("ERROR: cannot open temp file %s: %v", tempFile, err)
-			os.Exit(30)
-		}
-		defer f.Close()
-		tempFiles[i] = f
-	}
-	setter := func(i int) {
-		var err error
-		if script == "" {
-			err = ssh(&machines[i], sshOptions, command, outputs[i], errors[i])
-		} else {
-			err = runScript(&machines[i], sshOptions, script, scriptArgs, outputs[i], errors[i])
-		}
-		if err != nil {
-			close(outputs[i])
-			errors[i] <- err
-			close(errors[i])
-		}
-		fmt.Printf("Started %d / %d\n", i+1, len(machines))
-	}
-	for i := range machines {
-		go setter(i)
-	}
-	output := make([]string, len(machines))
-	sync := make(chan int, len(machines))
-	for i := 0; i < len(machines); i++ {
-		go func(i int) {
-			str := allOfChannelWithTempFile(outputs[i], tempFiles[i])
-			if replaceInSummary {
-				// replace the occurrences of the machine names with SSHTOOL_TARGET, to unclutter output
-				str = strings.Replace(str, machines[i].host, "\"$SSHTOOL_TARGET\"", -1)
-			}
-			output[i] = str
-			sync <- i
-		}(i)
-	}
-	// execution has finished here for all targets
-
-	for i := 0; i < len(machines); i++ {
-		machineIdx := <-sync
-		machines[machineIdx].done = true
-		out := output[machineIdx]
-		summarizedOutput[out] = append(summarizedOutput[out], machineIdx)
-		fmt.Printf("    Done %d / %d        Machine %s \n", i+1, len(machines), machines[machineIdx].host)
-	}
-	printSummary("Output")
-
-	// errors:
-	donePrintErrorHeader := false
-	printErrorHeader := func() {
-		if !donePrintErrorHeader {
-			fmt.Println("----------- ERRORS ---------------------------------------------------------")
-			donePrintErrorHeader = true
-		}
-	}
-	summarizedOutput = make(map[string][]int)
-	for i, ch := range errors {
-		output[i] = ""
-		for x := range ch {
-			// replace the occurrences of the machine names with SSHTOOL_TARGET, to unclutter output
-			str := x.Error()
-			if replaceInSummary {
-				str = strings.Replace(str, machines[i].host, "\"$SSHTOOL_TARGET\"", -1)
-			}
-			output[i] += str
-		}
-	}
-	for i, msgs := range output {
-		if msgs != "" {
-			printErrorHeader()
-			// summarize the errors
-			msgs += "\n"
-			summarizedOutput[msgs] = append(summarizedOutput[msgs], i)
-		}
-	}
-	printSummary("ERROR")
-
-	// only now delete the temporary directory
-	err = os.RemoveAll(tempDir)
-	if err != nil {
-		fmt.Printf("Error removing temp directory %s: %v\n", tempDir, err)
-		os.Exit(20)
-	}
-	if donePrintErrorHeader {
-		fmt.Println("Finished with errors")
-		os.Exit(1)
-	} else {
-		fmt.Println("End!")
 	}
 }
 
