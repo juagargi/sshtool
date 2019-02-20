@@ -290,7 +290,7 @@ func loadMachines(targets string) []target {
 		fmt.Printf("[sshtool] Loading targets from %s\n", targets)
 	}
 	var lines []string
-	if _, err := os.Stat(targets); os.IsNotExist(err) {
+	if _, err := os.Stat(targets); err != nil {
 		lines = strings.Split(targets, ",")
 	} else {
 		file, err := os.Open(targets)
