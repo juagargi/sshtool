@@ -147,25 +147,26 @@ func main() {
 	setter := func(i int) {
 		var err error
 		if pathToCopy != "" {
-			err = remoteCopySrcToDst(&machines[i], pathToCopy, "/tmp/"+pathToCopy)
+			err = remoteCopySrcToDst(&machines[i], pathToCopy, "/tmp/"+filepath.Base(pathToCopy))
 		}
 		if err != nil {
 			close(outputs[i])
 			errors[i] <- err
 			close(errors[i])
-		}
-		if script != "" {
-			err = runScript(&machines[i], sshOptions, script, scriptArgs, outputs[i], errors[i])
-		} else if command != "" {
-			err = ssh(&machines[i], sshOptions, command, outputs[i], errors[i])
 		} else {
-			close(outputs[i])
-			close(errors[i])
-		}
-		if err != nil {
-			close(outputs[i])
-			errors[i] <- err
-			close(errors[i])
+			if script != "" {
+				err = runScript(&machines[i], sshOptions, script, scriptArgs, outputs[i], errors[i])
+			} else if command != "" {
+				err = ssh(&machines[i], sshOptions, command, outputs[i], errors[i])
+			} else {
+				close(outputs[i])
+				close(errors[i])
+			}
+			if err != nil {
+				close(outputs[i])
+				errors[i] <- err
+				close(errors[i])
+			}
 		}
 		fmt.Printf("Started %d / %d\n", i+1, len(machines))
 	}
