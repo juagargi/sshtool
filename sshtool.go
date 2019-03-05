@@ -381,7 +381,7 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 	sshOptions = append(sshOptions, "-o", "LogLevel=QUIET")
 
 	// export an environment variable per target with its name:
-	command = "export SSHTOOL_TARGET=\"" + machine.host + "\";" + command
+	command = "export LC_ALL=C; export SSHTOOL_TARGET=\"" + machine.host + "\";" + command
 	sshOptions = append(sshOptions, "-t", machine.host, command)
 	cmd := exec.Command("ssh", sshOptions...)
 	if verbose {
