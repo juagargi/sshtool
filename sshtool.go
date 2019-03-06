@@ -122,7 +122,7 @@ func main() {
 	signal.Notify(signalChannel, os.Interrupt)
 	go func() {
 		for s := range signalChannel {
-			handleInterrupt(s)
+			handleInterrupt(s, replaceInSummary)
 		}
 	}()
 
@@ -195,7 +195,7 @@ func main() {
 		summarizedOutput[out] = append(summarizedOutput[out], machineIdx)
 		fmt.Printf("    Done %d / %d        Machine %s \n", i+1, len(machines), machines[machineIdx].host)
 	}
-	printSummary("Output")
+	printSummary("Output", replaceInSummary)
 
 	// errors:
 	donePrintErrorHeader := false
@@ -225,7 +225,7 @@ func main() {
 			summarizedOutput[msgs] = append(summarizedOutput[msgs], i)
 		}
 	}
-	printSummary("ERROR")
+	printSummary("ERROR", replaceInSummary)
 
 	// only now delete the temporary directory
 	err = os.RemoveAll(tempDir)
@@ -507,25 +507,41 @@ func allOfChannelWithTempFile(ch <-chan string, f *os.File) string {
 	return ret
 }
 
-func printSummary(heading string) {
+func printSummary(heading string, summarize bool) {
+	var length int
+	if summarize {
+		length = len(summarizedOutput)
+	} else {
+		length = len(machines)
+	}
 	outputIndex := 1
 	for k, v := range summarizedOutput {
-		fmt.Println("-----------------------------------------------")
-		fmt.Printf("-- %s %d / %d :\n", heading, outputIndex, len(summarizedOutput))
-		fmt.Println("---- BEGIN -----------------------------------")
-		fmt.Print(k)
-		fmt.Println("---- END --------------------------------------")
-		fmt.Println("For targets:")
-		for _, i := range v {
-			fmt.Printf("%v ", machines[i].host)
+		var theseHosts [][]int
+		if summarize {
+			theseHosts = [][]int{v}
+		} else {
+			for _, i := range v {
+				theseHosts = append(theseHosts, []int{i})
+			}
 		}
-		fmt.Println()
-		outputIndex++
+		for _, hostsWithThisOutput := range theseHosts {
+			fmt.Println("-----------------------------------------------")
+			fmt.Printf("-- %s %d / %d :\n", heading, outputIndex, length)
+			fmt.Println("---- BEGIN -----------------------------------")
+			fmt.Print(k)
+			fmt.Println("---- END --------------------------------------")
+			fmt.Println("For targets:")
+			for _, i := range hostsWithThisOutput {
+				fmt.Printf("%v ", machines[i].host)
+			}
+			fmt.Println()
+			outputIndex++
+		}
 	}
 	fmt.Println("-----------------------------------------------")
 }
 
-func handleInterrupt(sig os.Signal) {
+func handleInterrupt(sig os.Signal, summarize bool) {
 	// print status
 	found := []int{}
 	for i, m := range machines {
@@ -543,7 +559,7 @@ func handleInterrupt(sig os.Signal) {
 	text, _ := reader.ReadString('\n')
 	text = text[:len(text)-1]
 	if text == "y" {
-		printSummary("Partial Output")
+		printSummary("Partial Output", summarize)
 		os.Exit(100)
 	}
 }
