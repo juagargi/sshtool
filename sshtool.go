@@ -253,7 +253,7 @@ FILE_OR_DIR File or directory to copy to targets. It will be copied to target:/t
 --verbatim  Don't do summary replacements with the target names
 --verbose   Be verbose when outputting
 
-If -t is not specified, the target machines file will be %s . The targets file must contain one line per target.
+If -t is not specified, the target machines file will be %s . The targets file must contain a "Host" entry per target.
 On each target, the environment variable SSHTOOL_TARGET will be defined with the name of the target.
 
 Examples:
@@ -264,22 +264,18 @@ sshtool -t as1-17 -c $SC/gen 'cd $SC; mv /tmp/gen gen.nextversion'
 }
 
 func loadMachinesFromLines(lines []string) []target {
-	var machines []target
-	separator := regexp.MustCompile("[\\s:]+")
-	for lineNumber := 1; lineNumber <= len(lines); lineNumber++ {
-		line := lines[lineNumber-1]
-		if len(line) == 0 || line[0] == '#' {
-			continue
-		}
-		fields := separator.Split(line, -1)
-		switch len(fields) {
-		case 0:
-			continue
-		case 1:
-			machines = append(machines, target{host: fields[0], done: false})
-		default:
-			fmt.Println("Error parsing the targets file at line", lineNumber, ", expected host but encountered", len(fields), " fields instead:", line)
-			os.Exit(1)
+	machines := make([]target, 0)
+	// Match lines starting with "Host "
+	re := regexp.MustCompile(`^\s*[hH]ost\s+(.*)$`)
+
+	// Find all matches
+	for _, line := range lines {
+		m := re.FindStringSubmatch(line)
+		if len(m) > 1 {
+			machines = append(machines, target{
+				host: m[1],
+				done: false,
+			})
 		}
 	}
 	return machines
@@ -292,8 +288,10 @@ func loadMachines(targets string) []target {
 	}
 	var lines []string
 	if _, err := os.Stat(targets); err != nil {
+		// List of targets.
 		lines = strings.Split(targets, ",")
 	} else {
+		// File.
 		file, err := os.Open(targets)
 		if err != nil {
 			fmt.Println("Error:", err)
