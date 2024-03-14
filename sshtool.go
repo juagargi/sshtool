@@ -29,6 +29,7 @@ var (
 	machines         = []target{}
 	summarizedOutput = make(map[string][]int) // output to machine index
 	verbose          = false
+	sshCommand       = "ssh"
 )
 
 type target struct {
@@ -85,6 +86,13 @@ func main() {
 				return
 			}
 			script = os.Args[i+1]
+			i++
+		} else if os.Args[i] == "--sshcommand" {
+			if len(os.Args) < i+2 {
+				usage()
+				return
+			}
+			sshCommand = os.Args[i+1]
 			i++
 		} else if os.Args[i] == "--verbatim" {
 			replaceInSummary = false
@@ -245,13 +253,14 @@ func usage() {
 	fmt.Printf(`Usage: sshtool [--verbatim] [--verbose | -v] -t TARGETS -o OPTS -i IDENT_FILE [-c FILE_OR_DIR] CMDS
 Executes CMDS commands in the TARGETS targets, with ssh options OPTS.
 
-CMDS        {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]}
-TARGETS     {targets_file | 'target1,target2,...'}
-OPTS        {ssh_options}
-IDENT_FILE  identity file passed to ssh with -i
-FILE_OR_DIR File or directory to copy to targets. It will be copied to target:/tmp/$FILE_OR_DIR
---verbatim  Don't do summary replacements with the target names
---verbose   Be verbose when outputting
+CMDS           {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]}
+TARGETS        {targets_file | 'target1,target2,...'}
+OPTS           {ssh_options}
+IDENT_FILE     identity file passed to ssh with -i
+FILE_OR_DIR    File or directory to copy to targets. It will be copied to target:/tmp/$FILE_OR_DIR
+--verbatim     Don't do summary replacements with the target names
+--verbose      Be verbose when outputting
+--sshcommmand  Command to run ssh; defaults to "ssh"
 
 If -t is not specified, the target machines file will be %s . The targets file must contain a "Host" entry per target.
 On each target, the environment variable SSHTOOL_TARGET will be defined with the name of the target.
@@ -381,7 +390,7 @@ func ssh(machine *target, sshOptions []string, command string, output chan<- str
 	// export an environment variable per target with its name:
 	command = "export LC_ALL=C; export SSHTOOL_TARGET=\"" + machine.host + "\";" + command
 	sshOptions = append(sshOptions, "-t", machine.host, command)
-	cmd := exec.Command("ssh", sshOptions...)
+	cmd := exec.Command(sshCommand, sshOptions...)
 	if verbose {
 		fmt.Printf("[sshtool] CMD = %s\n", strings.Join(cmd.Args, " "))
 	}
