@@ -272,26 +272,17 @@ sshtool -t as1-17 -c $SC/gen 'cd $SC; mv /tmp/gen gen.nextversion'
 `, defaultTargetsFilename)
 }
 
-func loadMachinesFromLines(lines []string) []target {
-	var machines []target
-	separator := regexp.MustCompile(`[\s:]+`)
-	for lineNumber := 1; lineNumber <= len(lines); lineNumber++ {
-		line := lines[lineNumber-1]
-		if len(line) == 0 || line[0] == '#' {
-			continue
-		}
-		fields := separator.Split(line, -1)
-		switch len(fields) {
-		case 0:
-			continue
-		case 1:
-			machines = append(machines, target{host: fields[0], done: false})
-		default:
-			fmt.Println("Error parsing the targets file at line", lineNumber, ", expected host but encountered", len(fields), " fields instead:", line)
-			os.Exit(1)
+func loadMachinesFromLines(s string) []target {
+	var targets []target
+	separator := regexp.MustCompile(`[\s:,]+`)
+
+	machines := separator.Split(s, -1)
+	for _, machine := range machines {
+		if len(machine) > 0 {
+			targets = append(targets, target{host: machine, done: false})
 		}
 	}
-	return machines
+	return targets
 }
 
 func loadMachinesFromFile(lines []string) []target {
@@ -317,13 +308,13 @@ func loadMachines(targets string) []target {
 	if verbose {
 		fmt.Printf("[sshtool] Loading targets from %s\n", targets)
 	}
-	var lines []string
+
 	if _, err := os.Stat(targets); err != nil {
 		// List of targets.
-		lines = strings.Split(targets, ",")
-		return loadMachinesFromLines(lines)
+		return loadMachinesFromLines(targets)
 	} else {
 		// File.
+		var lines []string
 		file, err := os.Open(targets)
 		if err != nil {
 			fmt.Println("Error:", err)
