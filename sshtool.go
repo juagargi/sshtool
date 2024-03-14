@@ -111,7 +111,7 @@ func main() {
 	if script == "" && len(commands) > 0 {
 		command = strings.Join(commands, ";")
 		// amend command:
-		command = ". ~/.profile;" + command
+		command = "[ -f ~/.profile ] && . ~/.profile;" + command
 	} else if _, err := os.Stat(script); script != "" && err != nil {
 		fmt.Println("Error with script file:", err)
 		os.Exit(1)
