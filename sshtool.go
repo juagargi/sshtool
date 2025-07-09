@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/rand"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -38,76 +39,41 @@ type target struct {
 }
 
 func main() {
-	var commands []string
-	script := ""
-	command := ""
-	scriptArgs := []string{}
-	sshOptions := []string{}
-	pathToCopy := ""
-	targets := defaultTargetsFilename
-	replaceInSummary := true
-	for i := 1; i < len(os.Args); i++ {
-		if os.Args[i] == "--help" || os.Args[i] == "-h" {
-			usage()
-			return
-		} else if os.Args[i] == "--verbose" || os.Args[i] == "-v" {
-			verbose = true
-		} else if os.Args[i] == "-t" {
-			if len(os.Args) < i+2 {
-				usage()
-				return
-			}
-			targets = os.Args[i+1]
-			i++
-		} else if os.Args[i] == "-o" {
-			if len(os.Args) < i+2 {
-				usage()
-				return
-			}
-			sshOptions = append(sshOptions, "-o", os.Args[i+1])
-			i++
-		} else if os.Args[i] == "-i" {
-			if len(os.Args) < i+2 {
-				usage()
-				return
-			}
-			sshOptions = append(sshOptions, "-i", os.Args[i+1])
-			i++
-		} else if os.Args[i] == "-c" {
-			if len(os.Args) < i+2 {
-				usage()
-				return
-			}
-			pathToCopy = os.Args[i+1]
-			i++
-		} else if os.Args[i] == "-f" {
-			if len(os.Args) < i+2 || len(commands) > 0 {
-				usage()
-				return
-			}
-			script = os.Args[i+1]
-			i++
-		} else if os.Args[i] == "--sshcommand" {
-			if len(os.Args) < i+2 {
-				usage()
-				return
-			}
-			sshCommand = os.Args[i+1]
-			i++
-		} else if os.Args[i] == "--verbatim" {
-			replaceInSummary = false
-		} else {
-			if script != "" {
-				scriptArgs = append(scriptArgs, fmt.Sprintf("\"%s\"", os.Args[i]))
-			} else {
-				commands = append(commands, os.Args[i])
-			}
-		}
+	flag.Usage = usage
+	flag.BoolVar(&verbose, "verbose", false, "Enable verbose output")
+	scriptFlag := flag.String("f", "", "script_file_here_to_run_there.sh [argument1 argument2 ...]")
+	verbatimFlag := flag.Bool("verbatim", false, "Don't do summary replacements with the target names")
+	targetsFlag := flag.String("t", defaultTargetsFilename, "{targets_file | 'target1,target2,...'}")
+	sshOptionsFlag := flag.String("o", "", "ssh options")
+	pathToCopyFlag := flag.String("c", "", "File or directory to copy to targets. It will be copied to target:/tmp/$FILE_OR_DIR")
+	identityFlag := flag.String("i", "", "identity file passed to ssh with -i")
+	flag.StringVar(&sshCommand, "sshcommmand", sshCommand, `Command to run ssh; defaults to "ssh"`)
+
+	flag.Parse()
+
+	targets := *targetsFlag
+	sshOptions := make([]string, 0)
+	if *sshOptionsFlag != "" {
+		sshOptions = append(sshOptions, "-o", *sshOptionsFlag)
 	}
+	if *identityFlag != "" {
+		sshOptions = append(sshOptions, "-i", *identityFlag)
+	}
+	pathToCopy := *pathToCopyFlag
+	script := *scriptFlag
+	replaceInSummary := !(*verbatimFlag)
+	var commands, scriptArgs []string
+	if script == "" {
+		commands = flag.Args()
+	} else {
+		scriptArgs = flag.Args()
+	}
+
 	if script == "" && len(commands) == 0 && pathToCopy == "" {
-		usage()
-		return
+		flag.Usage()
+		os.Exit(2)
 	}
+	command := ""
 	if script == "" && len(commands) > 0 {
 		command = strings.Join(commands, ";")
 		// amend command:
@@ -250,7 +216,8 @@ func main() {
 }
 
 func usage() {
-	fmt.Printf(`Usage: sshtool [--verbatim] [--verbose | -v] -t TARGETS -o OPTS -i IDENT_FILE [-c FILE_OR_DIR] CMDS
+	fmt.Fprintf(os.Stderr,
+		`Usage: sshtool [--verbatim] [--verbose] -t TARGETS -o OPTS -i IDENT_FILE [-c FILE_OR_DIR] CMDS
 Executes CMDS commands in the TARGETS targets, with ssh options OPTS.
 
 CMDS           {'commands && to be executed' | -f script_file_here_to_run_there.sh [argument1 argument2 ...]}
